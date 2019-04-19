@@ -1,0 +1,1 @@
+program.exe example.txt 25
