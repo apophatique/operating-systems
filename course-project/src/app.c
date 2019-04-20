@@ -86,6 +86,7 @@ typedef struct {
 } passenger_t;
 
 passenger_t *passengers;
+int passengers_count_in_cities[4];
 
 typedef struct {
     coord_t coord;
@@ -138,7 +139,6 @@ void initialize_window() {
 }
 
 void *plane_thread_routine() {
-    sleep(1);
     while (true) {
         if (plane.current_city == 0) {
             plane.current_city = -1;
@@ -206,14 +206,16 @@ void passengers_thread_routine(void *data) {
                     if (pthread_mutex_trylock(&plane_mutexes[i]) != 0) {
                         continue;
                     }
+
                     printf("Seat is busy: %d\n", i);
                     plane.passengers[i] = passenger;
-                    plane.passengers_id[i] = passenger->id;
+                    plane.passengers_id[i] = 1;
                     passenger_seat_id = i;
 
                     printf("Passenger id: %d, request: %d from city %d occurred in plane\n", passenger->id, passenger->requested_city, passenger->current_city);
                     passenger->is_in_plane = true;
                     passenger->last_city = passenger->current_city;
+                    passengers_count_in_cities[passenger->current_city]--;
                     passenger->current_city = -2;
                     plane.busy_places_counter+=1;
 
@@ -226,15 +228,17 @@ void passengers_thread_routine(void *data) {
 
             plane.busy_places_counter-=1;
             plane.passengers[passenger_seat_id] = NULL;
-            plane.passengers_id[passenger->id] = -1;
-            passenger_seat_id = -1;
+            plane.passengers_id[passenger_seat_id] = -1;
 
             passenger->current_city = passenger->requested_city;
+            passengers_count_in_cities[passenger->current_city]++;
             passenger->is_in_plane = false;
             passenger->requested_city = get_passenger_requested_city(passenger->current_city);
 
             printf("Passenger id: %d, request: %d occurred in city %d\n", passenger->id, passenger->requested_city, passenger->current_city);
+
             pthread_mutex_unlock(&plane_mutexes[passenger_seat_id]);
+            passenger_seat_id = -1;
             sleep(get_rand(3, 4));
         }
     }
@@ -314,8 +318,8 @@ void render_information_table() {
 
     values.foreground = 0x000000;
     XChangeGC(display, gc, GCForeground, &values);
-    /*
-    for (int i = 0; i < plane.busy_places_counter; i++) {
+    for (int i = 0; i < 4; i++) {
+        if (plane.passengers_id[i] != -1) {
             XDrawString(
                     display,
                     window,
@@ -334,7 +338,7 @@ void render_information_table() {
                     230 + i * 15,
                     get_city_name_by_his_number(plane.passengers[i]->last_city),
                     get_string_length(get_city_name_by_his_number(plane.passengers[i]->last_city))
-                    );
+            );
 
             XDrawString(
                     display,
@@ -344,15 +348,127 @@ void render_information_table() {
                     230 + i * 15,
                     get_city_name_by_his_number(plane.passengers[i]->requested_city),
                     get_string_length(get_city_name_by_his_number(plane.passengers[i]->requested_city))
-                    );
+            );
         }
-        */
+    }
 }
 
 void render_plane() {
     values.foreground = 0x99FBFF;
     XChangeGC(display, gc, GCForeground, &values);
     XFillArc(display, window, gc, plane.coord.x, plane.coord.y, 70, 70, 360 * 64, 360 * 64);
+}
+
+void render_passengers_count_in_cities() {
+    int digits_count_of_moscow_passengers_number = passengers_count_in_cities[0] > 9 ? 2 : 1;
+    int digits_count_of_beijing_passengers_number = passengers_count_in_cities[1] > 9 ? 2 : 1;
+    int digits_count_of_new_york_passengers_number = passengers_count_in_cities[2] > 9 ? 2 : 1;
+    int digits_count_of_london_passengers_number = passengers_count_in_cities[3] > 9 ? 2 : 1;
+
+    char *moscow_passengers_message = "Passengers count in Moscow: ";
+    char *beijing_passengers_message = "Passengers count in Beijing: ";
+    char *new_york_passengers_message = "Passengers count in New-York: ";
+    char *london_passengers_message = "Passengers count in London: ";
+
+    char *moscow_passengers_count_buffer = (char *) malloc((digits_count_of_moscow_passengers_number) * sizeof(char));
+    char *beijing_passengers_count_buffer = (char *) malloc((digits_count_of_beijing_passengers_number) * sizeof(char));
+    char *new_york_passengers_count_buffer = (char *) malloc((digits_count_of_new_york_passengers_number) * sizeof(char));
+    char *london_passengers_count_buffer = (char *) malloc((digits_count_of_london_passengers_number) * sizeof(char));
+
+    sprintf(moscow_passengers_count_buffer,  "%d", passengers_count_in_cities[0]);
+    sprintf(beijing_passengers_count_buffer,  "%d", passengers_count_in_cities[1]);
+    sprintf(new_york_passengers_count_buffer,  "%d", passengers_count_in_cities[2]);
+    sprintf(london_passengers_count_buffer,  "%d", passengers_count_in_cities[3]);
+
+    coord_t moscow_message_coord;
+    moscow_message_coord.x = 610;
+    moscow_message_coord.y = 565;
+
+    coord_t beijing_message_coord;
+    beijing_message_coord.x = 610;
+    beijing_message_coord.y = 65;
+
+    coord_t new_york_message_coord;
+    new_york_message_coord.x = 210;
+    new_york_message_coord.y = 65;
+
+    coord_t london_message_coord;
+    london_message_coord.x = 210;
+    london_message_coord.y = 565;
+
+    XDrawString(
+            display,
+            window,
+            gc,
+            moscow_message_coord.x,
+            moscow_message_coord.y,
+            moscow_passengers_message,
+            get_string_length(moscow_passengers_message)
+    );
+    XDrawString(
+            display,
+            window,
+            gc,
+            beijing_message_coord.x,
+            beijing_message_coord.y,
+            beijing_passengers_message,
+            get_string_length(beijing_passengers_message)
+    );
+    XDrawString(
+            display,
+            window,
+            gc,
+            new_york_message_coord.x,
+            new_york_message_coord.y,
+            new_york_passengers_message,
+            get_string_length(new_york_passengers_message)
+    );
+    XDrawString(
+            display,
+            window,
+            gc,
+            london_message_coord.x,
+            london_message_coord.y,
+            london_passengers_message,
+            get_string_length(london_passengers_message)
+    );
+
+    XDrawString(
+            display,
+            window,
+            gc,
+            moscow_message_coord.x + 170,
+            moscow_message_coord.y,
+            moscow_passengers_count_buffer,
+            get_string_length(moscow_passengers_count_buffer)
+    );
+    XDrawString(
+            display,
+            window,
+            gc,
+            beijing_message_coord.x + 170,
+            beijing_message_coord.y,
+            beijing_passengers_count_buffer,
+            get_string_length(beijing_passengers_count_buffer)
+    );
+    XDrawString(
+            display,
+            window,
+            gc,
+            new_york_message_coord.x + 180,
+            new_york_message_coord.y,
+            new_york_passengers_count_buffer,
+            get_string_length(new_york_passengers_count_buffer)
+    );
+    XDrawString(
+            display,
+            window,
+            gc,
+            london_message_coord.x + 170,
+            london_message_coord.y,
+            london_passengers_count_buffer,
+            get_string_length(london_passengers_count_buffer)
+    );
 }
 
 void iteration_render() {
@@ -362,6 +478,7 @@ void iteration_render() {
     render_cities();
     render_plane();
     render_information_table();
+    render_passengers_count_in_cities();
 
     XFlush(display);
     usleep(20000);
@@ -398,14 +515,17 @@ void run_plane_thread() {
     pthread_create(&plane_thread, NULL, plane_thread_routine, NULL);
 }
 
-void start(int passengersCount) {
+void start() {
     for (int i = 0; i < 4; i++) {
         pthread_mutex_init(&plane_mutexes[i], NULL);
     }
     srand48((int64_t) time(NULL));
     initialize_window();
+
+    int passengersCount = get_passengers_count();
     run_passengers_thread(passengersCount);
     run_plane_thread();
+    passengers_count_in_cities[0]+=passengersCount;
 
     while (true) {
         iteration_render();
@@ -413,6 +533,6 @@ void start(int passengersCount) {
 }
 
 int main() {
-    start(2);
+    start();
     return EXIT_SUCCESS;
 }
