@@ -14,48 +14,15 @@
 #define WINDOW_HEIGHT 800
 #define WINDOW_BORDER_WIDTH 3
 #define NUMBER_OF_PASSENGER_SEATS 4
+#define NUMBER_OF_MUTEXES 4
+#define SLEEP_ON_ITERATION_RENDER 20000
+#define PLANE_INIT_COORD_X 836
+#define PLANE_INIT_COORD_Y 580
 
 /**
  * Extended random numbers generation function
  */
-long get_rand(const long min, const long max) {
-    return lrand48() % (max + 1 - min) + (min);
-}
 
-int get_passenger_requested_city(int current_city) {
-    int rand_city_num = current_city;
-
-    while (rand_city_num == current_city) {
-        rand_city_num = get_rand(0, 3);
-    }
-
-    return rand_city_num;
-}
-
-char *get_city_name_by_his_number(const int number) {
-    switch (number) {
-        case 0:
-            return "Moscow";
-        case 1:
-            return "Beijing";
-        case 2:
-            return "New-York";
-        case 3:
-            return "London";
-        default:
-            return "undefined";
-    }
-}
-
-ssize_t get_string_length(char *buffer) {
-    ssize_t length_of_data_to_write = 0;
-
-    while (buffer[length_of_data_to_write] != 0) {
-        length_of_data_to_write++;
-    }
-
-    return length_of_data_to_write;
-}
 
 typedef struct {
     int x;
@@ -72,7 +39,9 @@ typedef struct {
 
 passenger_t *passengers;
 int passengers_count_in_cities[4];
+
 pthread_mutex_t plane_mutexes[4];
+pthread_mutex_t plane_mutex;
 
 typedef struct {
     coord_t coord;
@@ -89,10 +58,76 @@ Window window;
 GC gc;
 XGCValues values;
 
-pthread_mutex_t plane_mutex;
+/**
+ * Функция, возвращающя случайное число в заданном интервале.
+ *
+ * @param min - Нижняя граница.
+ * @param max - Верхняя граница.
+ * @return-  Случайное число.
+ */
+long get_rand(const long min, const long max) {
+    return lrand48() % (max + 1 - min) + (min);
+}
 
+/**
+ * Получить следующий город для отправления пассажира.
+ * Полученный город не должен быть равен текущему.
+ *
+ * @param current_city - Текущий город.
+ * @return - Новый город для отправления.
+ */
+int get_passenger_requested_city(int current_city) {
+    int rand_city_num = current_city;
+
+    while (rand_city_num == current_city) {
+        rand_city_num = get_rand(0, 3);
+    }
+
+    return rand_city_num;
+}
+
+/**
+ * Взять имя города по его номеру.
+ *
+ * @param number - Номер города.
+ * @return String название города.
+ */
+char *get_city_name_by_his_number(const int number) {
+    switch (number) {
+        case 0:
+            return "Moscow";
+        case 1:
+            return "Beijing";
+        case 2:
+            return "New-York";
+        case 3:
+            return "London";
+        default:
+            return "undefined";
+    }
+}
+
+/**
+ * Получить длину буфера.
+ *
+ * @param buffer - String строка.
+ * @return - Целочисленная длина строки.
+ */
+ssize_t get_string_length(char *buffer) {
+    ssize_t length_of_data_to_write = 0;
+
+    while (buffer[length_of_data_to_write] != 0) {
+        length_of_data_to_write++;
+    }
+
+    return length_of_data_to_write;
+}
+
+/**
+ * Функция инициации графического окна.
+ */
 void initialize_window() {
-    XInitThreads();
+    XInitThreads();  //Инициация потоков
     display = XOpenDisplay(NULL);
 
     if (display == NULL) {
@@ -102,7 +137,7 @@ void initialize_window() {
 
     screen = XDefaultScreen(display);
 
-    window = XCreateSimpleWindow(
+    window = XCreateSimpleWindow( // Создание выключенного окна, возвращая его идентификатор.
             display,
             RootWindow(display, screen),
             WINDOW_X,
@@ -119,11 +154,17 @@ void initialize_window() {
         exit(1);
     }
 
+    // Делаем графическое окно видимым
     XMapWindow(display, window);
     gc = XDefaultGC(display, screen);
 }
 
+/**
+ * Главная функция потока самолёта.
+ */
 void *plane_thread_routine() {
+    // Цикл перемещения самолёта. За один цикл он проходит от одного города к другому.
+    // Перед отлётом от города, "засыпает" на 3 секунды.
     while (true) {
         sleep(3);
 
@@ -167,20 +208,31 @@ void *plane_thread_routine() {
     }
 }
 
+/**
+ * Главный цикл потока пассажиров.
+ */
 void passengers_thread_routine(void *data) {
     int passenger_seat_id = -1;
     passenger_t *passenger = (passenger_t *) data;
 
+    //Осной цикл ожидания пассажира для какого-либо действия
     while (true) {
+
+        // Блок, описывающий заход пассажира на корабль.
+        // Для этого необходимо, чтобы города пассажира и самолёта совпадали,
+        // необходимы свободные места и чтобы пассажир не был уже в самолёте.
         if (
                 plane.current_city == passenger->current_city &&
                 plane.busy_places_counter < NUMBER_OF_PASSENGER_SEATS &&
                 passenger->is_in_plane == false
         ) {
+            // Блокировка самолёта на время анализа.
             pthread_mutex_lock(&plane_mutex);
 
+            //Перебор всех 4 сидений в самолёте на наличие свободных.
             for (int i = 0; i < 4; i++) {
                 if (plane.passengers[i] == NULL) {
+                    //Блокировка свободного выбранного сидения
                     if (pthread_mutex_trylock(&plane_mutexes[i]) != 0) {
                         continue;
                     }
@@ -203,7 +255,11 @@ void passengers_thread_routine(void *data) {
             pthread_mutex_unlock(&plane_mutex);
         }
 
+        // Блок, описывающий выход пассажира из самолёта.
+        // Для этого необходимо, чтобы город, в который прилетел самолёт, совпадал с запрашиваемым пассажиром городом
+        // Также необходимо, чтобы пассажир был в самолёте
         if (plane.current_city == passenger->requested_city && passenger->is_in_plane == true) {
+            // Блокировка самолёта на время анализа.
             pthread_mutex_lock(&plane_mutex);
 
             plane.busy_places_counter -= 1;
@@ -217,14 +273,19 @@ void passengers_thread_routine(void *data) {
 
             printf("Passenger id: %d, request: %d occurred in city %d\n", passenger->id, passenger->requested_city, passenger->current_city);
 
+            //Разблокировка освободившегося сидения
             pthread_mutex_unlock(&plane_mutexes[passenger_seat_id]);
             passenger_seat_id = -1;
+            //Разблокировка самолёта по окончании анализа
             pthread_mutex_unlock(&plane_mutex);
             sleep(get_rand(3, 4));
         }
     }
 }
 
+/**
+ * Стартовая функция, запрашивающая у пользователя количество пассажиров.
+ */
 int get_passengers_count() {
     system("clear");
     printf("Enter the passengers count: ");
@@ -235,6 +296,12 @@ int get_passengers_count() {
     return passengersCount;
 }
 
+/**
+ * Функция, считающая количество разрядов в числе
+ *
+ * @param positive_int - Число.
+ * @return Количество разрядов.
+ */
 int count_num_of_digits_in_positive_int(int positive_int) {
     if (positive_int < 0) {
         return 0;
@@ -250,13 +317,18 @@ int count_num_of_digits_in_positive_int(int positive_int) {
     return num_of_digits;
 }
 
-
+/**
+ * Функция отрисовки белого фона.
+ */
 void render_background() {
     values.foreground = 0xFFFFFF;
     XChangeGC(display, gc, GCForeground, &values);
     XFillRectangle(display, window, gc, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
 }
 
+/**
+ * Функция отрисовки городов в форме черных эллипсов, а также дорог между ними.
+ */
 void render_cities() {
     values.foreground = 0x000000;
     XChangeGC(display, gc, GCForeground, &values);
@@ -294,6 +366,9 @@ void render_cities() {
     XDrawLine(display, window, gc, 120, 120, 840, 120);
 }
 
+/**
+ * Отрисовка таблицы, показывающей информацию о пассажире в рейсе.
+ */
 void render_information_table() {
     values.foreground = 0x141924;
     XChangeGC(display, gc, GCForeground, &values);
@@ -316,11 +391,14 @@ void render_information_table() {
     values.foreground = 0x000000;
     XChangeGC(display, gc, GCForeground, &values);
 
+    // Проход по 4 сидениям
     for (int i = 0; i < 4; i++) {
+        //Проверка на наличие свободного места
         if (plane.places[i] != -1) {
             char *buf = (char *)calloc(count_num_of_digits_in_positive_int(plane.passengers[i]->id + 1) + 1, sizeof(char));
             sprintf(buf, "%d", plane.passengers[i]->id + 1);
 
+            //Вывод в таблицу айди пассажира
             XDrawString(
                     display,
                     window,
@@ -330,7 +408,7 @@ void render_information_table() {
                     buf,
                     get_string_length(buf)
             );
-
+            //Вывод в таблицу города, из которого пассажир вылетел
             XDrawString(
                     display,
                     window,
@@ -340,7 +418,7 @@ void render_information_table() {
                     get_city_name_by_his_number(plane.passengers[i]->last_city),
                     get_string_length(get_city_name_by_his_number(plane.passengers[i]->last_city))
             );
-
+            //Вывод в таблицу города, в который пассажир летит.
             XDrawString(
                     display,
                     window,
@@ -353,13 +431,18 @@ void render_information_table() {
         }
     }
 }
-
+/**
+ * Функция отрисовки самолёта в виде голубого эллипса.
+ */
 void render_plane() {
     values.foreground = 0x99FBFF;
     XChangeGC(display, gc, GCForeground, &values);
     XFillArc(display, window, gc, plane.coord.x, plane.coord.y, 70, 70, 360 * 64, 360 * 64);
 }
 
+/**
+ * Функция вывода сообщения рядом с городами, показывающая количество пассижиров в данном городе.
+ */
 void render_passengers_count_in_cities() {
     int digits_count_of_moscow_passengers_number = passengers_count_in_cities[0] > 9 ? 2 : 1;
     int digits_count_of_beijing_passengers_number = passengers_count_in_cities[1] > 9 ? 2 : 1;
@@ -402,6 +485,7 @@ void render_passengers_count_in_cities() {
     london_message_coord.x = 210;
     london_message_coord.y = 565;
 
+    //Вывод сообщения о пассажирах в Москве
     XDrawString(
             display,
             window,
@@ -411,6 +495,7 @@ void render_passengers_count_in_cities() {
             moscow_passengers_message,
             get_string_length(moscow_passengers_message)
     );
+    //Вывод сообщения о пассажирах в Пекине
     XDrawString(
             display,
             window,
@@ -420,6 +505,7 @@ void render_passengers_count_in_cities() {
             beijing_passengers_message,
             get_string_length(beijing_passengers_message)
     );
+    //Вывод сообщения о пассажирах в Нью-Йорке
     XDrawString(
             display,
             window,
@@ -429,6 +515,7 @@ void render_passengers_count_in_cities() {
             new_york_passengers_message,
             get_string_length(new_york_passengers_message)
     );
+    //Вывод сообщения о пассажирах в Лондоне
     XDrawString(
             display,
             window,
@@ -438,7 +525,7 @@ void render_passengers_count_in_cities() {
             london_passengers_message,
             get_string_length(london_passengers_message)
     );
-
+    //Вывод количества пассажиров в Москве
     XDrawString(
             display,
             window,
@@ -448,6 +535,7 @@ void render_passengers_count_in_cities() {
             moscow_passengers_count_buffer,
             get_string_length(moscow_passengers_count_buffer)
     );
+    //Вывод количества пассажиров в Пекине
     XDrawString(
             display,
             window,
@@ -457,6 +545,7 @@ void render_passengers_count_in_cities() {
             beijing_passengers_count_buffer,
             get_string_length(beijing_passengers_count_buffer)
     );
+    //Вывод количества пассажиров в Нью-Йорке
     XDrawString(
             display,
             window,
@@ -466,6 +555,7 @@ void render_passengers_count_in_cities() {
             new_york_passengers_count_buffer,
             get_string_length(new_york_passengers_count_buffer)
     );
+    //Вывод количества пассажиров в Лондоне
     XDrawString(
             display,
             window,
@@ -482,6 +572,9 @@ void render_passengers_count_in_cities() {
     free(london_passengers_count_buffer);
 }
 
+/**
+ * Функция, объединяющая все необходимые функции рендеринга на каждой итерации
+ */
 void iteration_render() {
     XClearWindow(display, window);
 
@@ -492,13 +585,19 @@ void iteration_render() {
     render_passengers_count_in_cities();
 
     XFlush(display);
-    usleep(20000);
+    //Ожидание между итерациями
+    usleep(SLEEP_ON_ITERATION_RENDER);
 }
 
+/**
+ * Функция инициализации и запуска потоков пассажиров.
+ * @param passengers_count - Количество пассажиров.
+ */
 void run_passengers_thread(int passengers_count) {
     pthread_t *passenger_threads = (pthread_t *) calloc(passengers_count, sizeof(pthread_t));
     passengers = (passenger_t *) calloc(passengers_count, sizeof(passenger_t));
 
+    //Инициализируем начальные данные пассажиров
     for (int i = 0; i < passengers_count; i++) {
         passengers[i].id = i;
         passengers[i].is_in_plane = false;
@@ -510,14 +609,17 @@ void run_passengers_thread(int passengers_count) {
         pthread_create(&(passenger_threads[i]), NULL, (void *) passengers_thread_routine, &passengers[i]);
     }
 }
-
+/**
+ * Функция инициализации и запуска потока самолёта
+ */
 void run_plane_thread() {
-    plane.coord.x = 836;
-    plane.coord.y = 580;
+    //Инициализируем начальные данные самолёта
+    plane.coord.x = PLANE_INIT_COORD_X;
+    plane.coord.y = PLANE_INIT_COORD_Y;
     plane.busy_places_counter = 0;
     plane.current_city = 0;
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NUMBER_OF_PASSENGER_SEATS; i++) {
         plane.passengers[i] = NULL;
         plane.places[i] = -1;
     }
@@ -526,16 +628,23 @@ void run_plane_thread() {
     pthread_create(&plane_thread, NULL, plane_thread_routine, NULL);
 }
 
+/**
+ * Стартовая и основная функция, запускающая все процессы в программе.
+ */
 void start() {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NUMBER_OF_MUTEXES; i++) {
         pthread_mutex_init(&plane_mutexes[i], NULL);
     }
     pthread_mutex_init(&plane_mutex, NULL);
-
+//Для правильного рандома
     srand48((int64_t) time(NULL));
+    //Создаем графическое окно
     initialize_window();
+    // Получаем количество пассажиров
     int passengersCount = get_passengers_count();
+    //Инициализируем первый город как начальный
     passengers_count_in_cities[0] += passengersCount;
+    //Запуски потоков
     run_passengers_thread(passengersCount);
     run_plane_thread();
 
@@ -544,6 +653,9 @@ void start() {
     }
 }
 
+/**
+ * Мейн функция программы
+ */
 int main() {
     start();
     return EXIT_SUCCESS;
