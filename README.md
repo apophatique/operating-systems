@@ -1,1 +1,1 @@
-ya ne ponimayu zachem ya na eto trachu svoyu zhizn`
+Repository for a University course on operating systems
